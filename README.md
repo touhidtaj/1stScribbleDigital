@@ -1,2 +1,2 @@
-# 1stScribbleDigital
-First he scribbled across every wall of the house with crayons and pencils. Then he took over both his parents’ phones, tapping out lines in notes apps for more than a year. At 3 years, 1 month and 13 days, little Abdullah drew this scribble in the Concepts app on his father’s desktop. Here, it comes alive.
+# 1st Scribble Digital on a PC
+It started on the walls. Crayons, pencils and every bare patch of paint in the house became Abdullah’s canvas. Then came the screens: for more than a year he tapped and dragged his way across both his parents’ phones, leaving trails of ink in their notes apps. At 3 years, 1 month and 13 days, he sat at his father’s desktop and made his first piece of digital art in the Concepts app, a tangle of purple, green, orange and pink that no one asked for and everyone loves. This page gives that scribble a life of its own. Touch the lines and they sing, drag a finger to draw over them, and let the whole thing dance.
