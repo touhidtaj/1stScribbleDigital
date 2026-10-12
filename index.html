@@ -200,7 +200,7 @@ body {
 .card { background: var(--solid); color: var(--fg); border-radius: 26px; padding: 14px; box-shadow: var(--shadow); transform: rotate(-1deg); animation: card 0.4s var(--spring); display: grid; gap: 12px; justify-items: center; max-width: 100%; box-sizing: border-box; }
 @keyframes card { from { opacity: 0; transform: rotate(-4deg) scale(0.85); } to { opacity: 1; transform: rotate(-1deg) scale(1); } }
 .pic { position: relative; background: #fff; border-radius: 16px; overflow: hidden; display: grid; place-items: center; width: min(80vw, 520px); min-height: 150px; }
-.pic img { display: block; max-width: 100%; max-height: min(56vh, 520px); width: auto; height: auto; -webkit-user-select: auto; user-select: auto; -webkit-touch-callout: default; }
+.pic img, .pic video { display: block; max-width: 100%; max-height: min(56vh, 520px); width: auto; height: auto; -webkit-user-select: auto; user-select: auto; -webkit-touch-callout: default; }
 .busy { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; background: #fff; color: #7a7794; font-family: var(--font-display); font-weight: 500; }
 .spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid #e3e1ee; border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -271,7 +271,7 @@ html, body { margin: 0; }
   <button class="mi" id="aHome" role="menuitem"><span class="mic" data-ic="home"></span><span>Abdullah's drawing</span></button>
   <button class="mi" id="aNew" role="menuitem"><span class="mic" data-ic="newp"></span><span>New page</span></button>
   <div class="msep" role="separator"></div>
-  <div class="mrow"><span class="mic" data-ic="save"></span><span>Save as</span><div class="seg" id="seg"><button data-fmt="png" aria-label="Save as PNG">PNG</button><button data-fmt="jpg" aria-label="Save as JPG">JPG</button><button data-fmt="gif" aria-label="Save as animated GIF">GIF</button></div></div>
+  <div class="mrow"><span class="mic" data-ic="save"></span><span>Save as</span><div class="seg" id="seg"><button data-fmt="png" aria-label="Save as PNG">PNG</button><button data-fmt="jpg" aria-label="Save as JPG">JPG</button><button data-fmt="mp4" aria-label="Save as MP4 video">MP4</button></div></div>
   <div class="msep" role="separator"></div>
   <button class="mi" id="aSound" role="menuitemcheckbox" aria-checked="true"><span class="mic" data-ic="soundOn"></span><span>Sound</span><span class="sw2" aria-hidden="true"></span></button>
   <p class="cap">Drawn at the age of 3 years, 1 month, &amp; 13 days</p>
@@ -283,13 +283,14 @@ html, body { margin: 0; }
   <div class="card" role="dialog" aria-label="Your picture">
     <div class="pic">
       <img id="pic" alt="Your drawing" hidden>
+      <video id="vid" controls playsinline loop hidden></video>
       <div class="busy" id="busy"><div class="spin"></div><span id="busytxt">Making your picture</span></div>
     </div>
     <div class="acts">
       <button class="pill primary" id="dl" disabled>Download</button>
       <button class="pill" id="closeSheet">Close</button>
     </div>
-    <p class="tip">On a phone you can also press and hold the picture to save it.</p>
+    <p class="tip">Keep this page open while the video records. On a phone you can also press and hold a picture to save it.</p>
   </div>
 </div>
 
@@ -703,17 +704,17 @@ html, body { margin: 0; }
   function updateEmpty() { $('empty').hidden = strokes.length > 0; }
 
   // ---------- audio ----------
-  var ac = null;
+  var ac = null, recDest = null;
   function initAudio() {
     if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = null; } }
     if (ac && ac.state === 'suspended') { ac.resume().catch(function () {}); }
   }
   function tone(f, type, dur, vol, delay) {
-    if (!ac || !soundOn || !isFinite(f)) return;
+    if (!ac || (!soundOn && !recDest) || !isFinite(f)) return;
     var t0 = ac.currentTime + (delay || 0), o = ac.createOscillator(), g = ac.createGain();
     o.type = type || 'sine'; o.frequency.value = f;
     g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol || 0.14, t0 + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t0 + (dur || 0.7));
-    o.connect(g); g.connect(ac.destination); o.start(t0); o.stop(t0 + (dur || 0.7) + 0.05);
+    o.connect(g); g.connect(recDest || ac.destination); o.start(t0); o.stop(t0 + (dur || 0.7) + 0.05);
   }
   function voice(group, f) {
     if (group === 'frame') { tone(f, 'triangle', 1.2, 0.2); tone(f * 2, 'sine', 0.8, 0.05); }
@@ -801,6 +802,7 @@ html, body { margin: 0; }
     for (var si = 0; si < strokes.length; si++) {
       var s = strokes[si];
       if (!s.user) continue;
+      if (o.pt >= 0 && s.pt0 > o.pt) continue;
       var p = s.pts, n = p.length / 3;
       if (n < 3) continue;
       var period = Math.max(4, Math.min(22, Math.round(n / 6))), ph = s.seed % 6.28, base = s.rb ? [255, 184, 0] : s.rgb;
@@ -1441,77 +1443,129 @@ html, body { margin: 0; }
     if (sparkleOn) sparkleUser(c, { S: s, TX: xf.TX, TY: xf.TY, t: t, twf: wf ? wf * 2 : 0, sp: Math.max(0.8, longSide / 1000) });
     return cv;
   }
-  function lzw(px) {
-    var clear = 256, eoi = 257, bytes = [], cur = 0, nbits = 0, size = 9, next = 258, dict = new Map();
-    function emit(code) { cur |= code << nbits; nbits += size; while (nbits >= 8) { bytes.push(cur & 255); cur >>>= 8; nbits -= 8; } }
-    emit(clear);
-    var prefix = px[0];
-    for (var i = 1; i < px.length; i++) {
-      var c = px[i], key = prefix * 256 + c, v = dict.get(key);
-      if (v !== undefined) { prefix = v; continue; }
-      emit(prefix);
-      if (next < 4096) { dict.set(key, next++); if (next > (1 << size) && size < 12) size++; }
-      else { emit(clear); dict.clear(); next = 258; size = 9; }
-      prefix = c;
-    }
-    emit(prefix); emit(eoi);
-    if (nbits > 0) bytes.push(cur & 255);
-    return bytes;
+  // ---------- saving a video (the drawing being drawn, with its little tunes) ----------
+  var sheet = $('sheet'), pic = $('pic'), vid = $('vid'), busy = $('busy'), dlBtn = $('dl'), curBlob = null, curName = '', curUrl = '';
+  var recAbort = false, recBusy = false, recTimers = [];
+  function openSheet(label) {
+    $('busytxt').textContent = label; busy.hidden = false; pic.hidden = true; vid.hidden = true; dlBtn.disabled = true; curBlob = null; sheet.hidden = false;
   }
-  function gifEncode(frames, w, h, delay) {
-    var out = [];
-    function u16(v) { out.push(v & 255, (v >> 8) & 255); }
-    function str(s) { for (var i = 0; i < s.length; i++) out.push(s.charCodeAt(i)); }
-    str('GIF89a'); u16(w); u16(h); out.push(0xF7, 0, 0);
-    for (var r = 0; r < 6; r++) for (var g = 0; g < 6; g++) for (var b = 0; b < 6; b++) out.push(r * 51, g * 51, b * 51);
-    for (var i = 216; i < 256; i++) out.push(0, 0, 0);
-    out.push(0x21, 0xFF, 0x0B); str('NETSCAPE2.0'); out.push(3, 1, 0, 0, 0);
-    frames.forEach(function (px) {
-      out.push(0x21, 0xF9, 4, 0x04); u16(delay); out.push(0, 0);
-      out.push(0x2C); u16(0); u16(0); u16(w); u16(h); out.push(0); out.push(8);
-      var data = lzw(px);
-      for (var p = 0; p < data.length; p += 255) { var n = Math.min(255, data.length - p); out.push(n); for (var q = 0; q < n; q++) out.push(data[p + q]); }
-      out.push(0);
-    });
-    out.push(0x3B);
-    return new Uint8Array(out);
+  function closeSheet() {
+    recAbort = true; recTimers.forEach(clearTimeout); recTimers = [];
+    sheet.hidden = true; if (curUrl) { URL.revokeObjectURL(curUrl); curUrl = ''; }
+    pic.removeAttribute('src'); try { vid.pause(); } catch (e) {} vid.removeAttribute('src'); vid.hidden = true; curBlob = null;
   }
-  function toIndexed(img) {
-    var d = img.data, n = img.width * img.height, out = new Uint8Array(n);
-    for (var i = 0; i < n; i++) out[i] = 36 * Math.round(d[4 * i] / 51) + 6 * Math.round(d[4 * i + 1] / 51) + Math.round(d[4 * i + 2] / 51);
-    return out;
-  }
-  function makeGif() {
-    var N = 16, delay = 6, T = N * delay / 100, wf = 2 * Math.PI / T, frames = [], cw = 0, ch = 0;
-    var b = contentBounds(), s = 380 / Math.max(b.x1 - b.x0, b.y1 - b.y0);
-    var shared = document.createElement('canvas');
-    shared.width = Math.max(1, Math.round((b.x1 - b.x0) * s)); shared.height = Math.max(1, Math.round((b.y1 - b.y0) * s));
-    var sc = shared.getContext('2d'), xf = { S: s, TX: -b.x0 * s, TY: -b.y0 * s, k: 1 };
-    for (var i = 0; i < strokes.length; i++) if (strokes[i].user) bakeStroke(sc, strokes[i], xf);
-    for (var k = 0; k < N; k++) {
-      var cv = exportCanvas(380, k * T / N, true, wf, shared);
-      cw = cv.width; ch = cv.height;
-      frames.push(toIndexed(cv.getContext('2d').getImageData(0, 0, cw, ch)));
-    }
-    return new Blob([gifEncode(frames, cw, ch, delay)], { type: 'image/gif' });
-  }
-  var sheet = $('sheet'), pic = $('pic'), busy = $('busy'), dlBtn = $('dl'), curBlob = null, curName = '', curUrl = '';
-  function openSheet(label) { $('busytxt').textContent = label; busy.hidden = false; pic.hidden = true; dlBtn.disabled = true; curBlob = null; sheet.hidden = false; }
-  function closeSheet() { sheet.hidden = true; if (curUrl) { URL.revokeObjectURL(curUrl); curUrl = ''; } pic.removeAttribute('src'); curBlob = null; }
-  function showPicture(blob, ext) {
+  function showMedia(blob, ext, isVideo) {
     if (curUrl) URL.revokeObjectURL(curUrl);
     curBlob = blob; curName = 'wildlines-of-abdullah.' + ext; curUrl = URL.createObjectURL(blob);
-    pic.src = curUrl; pic.hidden = false; busy.hidden = true; dlBtn.disabled = false; dlBtn.focus();
+    busy.hidden = true; dlBtn.disabled = false;
+    if (isVideo) { pic.hidden = true; vid.src = curUrl; vid.hidden = false; var pr = vid.play(); if (pr && pr.catch) pr.catch(function () {}); }
+    else { vid.hidden = true; pic.src = curUrl; pic.hidden = false; }
+    dlBtn.focus();
+  }
+  function videoMime() {
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported || !HTMLCanvasElement.prototype.captureStream) return '';
+    var c = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+    for (var i = 0; i < c.length; i++) { try { if (MediaRecorder.isTypeSupported(c[i])) return c[i]; } catch (e) {} }
+    return '';
+  }
+  // the same timing Play uses: Abdullah's lines first, then your strokes one after another
+  function planVideo() {
+    var end = 0, hasOrig = false, list = [];
+    strokes.forEach(function (s) { if (s.orig) { hasOrig = true; s.pt0 = s.t0; s.pdur = s.dur; end = Math.max(end, s.t0 + s.dur); } });
+    var cur = hasOrig ? end + 0.3 : 0.2;
+    strokes.forEach(function (s) {
+      if (!s.user) return;
+      var dur = clamp(polyLen(s) / 800, 0.3, 1.6);
+      s.pt0 = cur; s.pdur = dur; cur += dur * 0.85; end = Math.max(end, s.pt0 + dur); list.push(s);
+    });
+    var kk = end > 18 ? 18 / end : 1;
+    if (kk < 1) { strokes.forEach(function (s) { if (s.pdur != null) { s.pt0 *= kk; s.pdur *= kk; } }); end *= kk; }
+    return { end: end, list: list, hasOrig: hasOrig, kk: kk };
+  }
+  function makeVideo() {
+    var mime = videoMime();
+    if (!mime) { closeSheet(); say('This browser cannot save video'); return; }
+    if (recBusy) return;
+    if (playing) stopPlay(false);
+    stopAllTimers();
+    var plan = planVideo(), list = plan.list;
+    var b = contentBounds(), LONG = 1080, s = LONG / Math.max(b.x1 - b.x0, b.y1 - b.y0);
+    var w2 = Math.max(2, Math.round((b.x1 - b.x0) * s / 2) * 2), h2 = Math.max(2, Math.round((b.y1 - b.y0) * s / 2) * 2);
+    var xf = { S: s, TX: -b.x0 * s, TY: -b.y0 * s, k: 1 }, sp = Math.max(0.8, LONG / 1000);
+    var vcv = document.createElement('canvas'); vcv.width = w2; vcv.height = h2;
+    var vctx = vcv.getContext('2d');
+    var ucv = document.createElement('canvas'); ucv.width = w2; ucv.height = h2;
+    var uctx = ucv.getContext('2d');
+    var lives = {}, baked = 0;
+    function drawFrame(pt, t) {
+      vctx.setTransform(1, 0, 0, 1, 0, 0); vctx.globalAlpha = 1; vctx.fillStyle = '#ffffff'; vctx.fillRect(0, 0, w2, h2);
+      paintOrig(vctx, { S: s, TX: xf.TX, TY: xf.TY, t: t, idle: 1.2, wf1: 1.4, wf2: 1.2, ripples: [], rt: 1e9, pt: pt, noPulse: true, party: 0, sparkle: sparkleOn, twf: 2.4, sp: sp });
+      while (baked < list.length && pt >= list[baked].pt0 + list[baked].pdur) {
+        var q = list[baked], L = lives[q.id];
+        if (L) { L.st.feed(1e9); L.st.finish(); composite(uctx, L.cv, q.op); delete lives[q.id]; }
+        else bakeStroke(uctx, q, xf);
+        baked++;
+      }
+      vctx.drawImage(ucv, 0, 0);
+      for (var i = baked; i < list.length; i++) {
+        var p = list[i];
+        if (pt < p.pt0) break;
+        var Lp = lives[p.id];
+        if (!Lp) { var lc = document.createElement('canvas'); lc.width = w2; lc.height = h2; Lp = lives[p.id] = { cv: lc, st: new Stamper(p, xf, lc.getContext('2d')) }; }
+        Lp.st.feed(Math.ceil(clamp((pt - p.pt0) / p.pdur, 0, 1) * (p.pts.length / 3)));
+        composite(vctx, Lp.cv, p.op);
+      }
+      if (sparkleOn) sparkleUser(vctx, { S: s, TX: xf.TX, TY: xf.TY, t: t, twf: 2.4, sp: sp, pt: pt });
+    }
+    initAudio();
+    var adest = null;
+    try { if (ac && ac.createMediaStreamDestination) adest = ac.createMediaStreamDestination(); } catch (e) { adest = null; }
+    var stream = vcv.captureStream(30);
+    if (adest) adest.stream.getAudioTracks().forEach(function (tr) { stream.addTrack(tr); });
+    var rec;
+    try { rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6000000 }); }
+    catch (e) { try { rec = new MediaRecorder(stream); } catch (e2) { closeSheet(); say('This browser cannot save video'); return; } }
+    var chunks = [], total = plan.end + 1.4, isMp4 = /mp4/.test(mime);
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = function () {
+      recBusy = false; recDest = null; recTimers.forEach(clearTimeout); recTimers = [];
+      stream.getTracks().forEach(function (tr) { try { tr.stop(); } catch (e) {} });
+      if (recAbort || sheet.hidden) return;
+      var blob = new Blob(chunks, { type: mime.split(';')[0] });
+      if (!blob.size) { closeSheet(); say('Could not make the video'); return; }
+      showMedia(blob, isMp4 ? 'mp4' : 'webm', true);
+      if (!isMp4) say('This browser makes WebM video, not MP4');
+    };
+    recAbort = false; recBusy = true; recDest = adest;
+    drawFrame(0, 0);
+    rec.start(400);
+    var t0 = performance.now(), lastSec = -1;
+    if (adest) {
+      list.slice(0, 40).forEach(function (q, i) { recTimers.push(setTimeout(function () { tone(PENTA[(i * 3) % PENTA.length], 'sine', 0.3, 0.08); }, q.pt0 * 1000 + 100)); });
+      if (plan.hasOrig) [[0, 'frame', 196], [0.8, 'arc', 329.63], [1.5, 'dark', 392], [2.4, 'green', 523.25], [3.0, 'orange', 659.25], [3.3, 'orange', 783.99], [3.6, 'orange', 987.77], [4.3, 'pink', 1046.5], [4.6, 'pink', 1318.5]].forEach(function (n) {
+        recTimers.push(setTimeout(function () { voice(n[1], n[2]); }, n[0] * plan.kk * 1000 + 100));
+      });
+      recTimers.push(setTimeout(function () { [523.25, 659.25, 783.99, 1046.5].forEach(function (f, i) { tone(f, 'triangle', 0.4, 0.1, i * 0.09); }); }, (plan.end + 0.2) * 1000));
+    }
+    (function tick() {
+      if (recAbort) { try { if (rec.state !== 'inactive') rec.stop(); } catch (e) {} return; }
+      var el = (performance.now() - t0) / 1000;
+      if (el >= total) { try { rec.stop(); } catch (e) {} return; }
+      drawFrame(el, el);
+      var sec = Math.floor(el);
+      if (sec !== lastSec) { lastSec = sec; $('busytxt').textContent = 'Recording ' + Math.min(sec + 1, Math.ceil(total)) + ' of ' + Math.ceil(total) + ' seconds'; }
+      setTimeout(tick, 33);
+    })();
   }
   function makePicture(fmt) {
     if (!strokes.length) { say('Draw something first'); return; }
-    openSheet(fmt === 'gif' ? 'Making your wiggly GIF' : 'Making your picture');
+    if (fmt === 'mp4') { openSheet('Getting ready to record'); setTimeout(makeVideo, 60); return; }
+    openSheet('Making your picture');
     setTimeout(function () {
       try {
-        if (fmt === 'gif') { showPicture(makeGif(), 'gif'); return; }
         exportCanvas(1600, 0, false, 0).toBlob(function (b) {
           if (!b) { closeSheet(); say('Could not make the picture'); return; }
-          showPicture(b, fmt);
+          showMedia(b, fmt, false);
         }, fmt === 'jpg' ? 'image/jpeg' : 'image/png', 0.92);
       } catch (err) { closeSheet(); say('Could not make the picture'); }
     }, 60);
